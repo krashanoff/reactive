@@ -48,7 +48,7 @@ const messageTemplate = (msg, totalReacts) => {
 
   embed
     .setTimestamp()
-    .setFooter("reactive", client.user.avatarURL());
+    .setFooter(`v${process.env.npm_package_version}`, client.user.avatarURL());
 
   return embed;
 };
