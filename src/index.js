@@ -16,14 +16,23 @@ const CMD_PFX = name => `${PREFIX}${name}`;
 const COMMANDS = require("./cmd.js");
 
 /**
- * Retrieves the total number of reactions for a given post.
+ * Retrieves the maximum number of reacts for a message on any
+ * one given emoji.
  *
  * @param {Discord.Message} msg Message to count reactions on.
  * @returns {Number} Total number of reactions.
  */
 const reactionCount = msg =>
-  msg.reactions.cache.reduce((acc, react) => acc + react.count, 0);
+  msg.reactions.cache.reduce((acc, react) => Math.max(acc, react.count), 0);
 
+/**
+ * Creates a Discord embed for the given message and reaction
+ * count.
+ * 
+ * @param {Discord.Message} msg The source Discord message.
+ * @param {Number} totalReacts The number of reactions.
+ * @returns {Discord.MessageEmbed} An embed to publish.
+ */
 const messageTemplate = (msg, totalReacts) => {
   let embed = new Discord.MessageEmbed()
     .setColor("#f850d2")
@@ -72,7 +81,7 @@ client.on("messageReactionAdd", async reaction => {
     return;
 
   const msg = reaction.message;
-  const totalReacts = reactionCount(msg);
+  const totalReacts = await reactionCount(msg);
   const fwdID = await db.getFwdChan(msg.guild.id);
   const fwdChan = await client.channels.resolve(fwdID);
 
@@ -117,13 +126,14 @@ client.on("messageReactionRemove", async reaction => {
     return;
 
   const minReacts = await db.getReactionMin(reaction.message.guild.id);
-  const totalReacts = reactionCount(reaction.message);
+  const totalReacts = await reactionCount(reaction.message);
   const fwdID = await db.getFwdChan(msg.guild.id);
   const fwdChan = await client.channels.resolve(fwdID);
+  const oldMsg = await fwdChan.messages.fetch(onBoard);
 
   // Drop from the board.
   if (totalReacts < minReacts) {
-    await fwdChan.messages.fetch(onBoard).delete({
+    await oldMsg.delete({
       reason: "Less reactions than required to remain on the board.",
     });
     await db.removeMapping(msg.id);
@@ -131,7 +141,6 @@ client.on("messageReactionRemove", async reaction => {
   }
 
   // Otherwise update to reflect the new count.
-  const oldMsg = await fwdChan.messages.fetch(onBoard);
   await oldMsg.edit(messageTemplate(msg, totalReacts));
 });
 
