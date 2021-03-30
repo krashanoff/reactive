@@ -24,6 +24,26 @@ const COMMANDS = require("./cmd.js");
 const reactionCount = msg =>
   msg.reactions.cache.reduce((acc, react) => acc + react.count, 0);
 
+const messageTemplate = (msg, totalReacts) => {
+  let embed = new Discord.MessageEmbed()
+    .setColor("#f850d2")
+    .setAuthor(msg.author.tag, msg.author.avatarURL({
+      dynamic: true,
+      size: 64,
+    }))
+    .setDescription(msg.content)
+    .addField(`**${totalReacts}** Reacts`, `[Original](${msg.url})`);
+
+  if (msg.attachments.array().length > 0)
+    embed.setImage(msg.attachments.array()[0].proxyURL);
+
+  embed
+    .setTimestamp()
+    .setFooter("reactive", client.user.avatarURL());
+
+  return embed;
+};
+
 
 // Simple command parser.
 client.on("message", async msg => {
@@ -42,38 +62,34 @@ client.on("messageReactionAdd", async reaction => {
     try {
       await reaction.fetch();
     } catch (err) {
-      console.error("Something went wrong when fetching the message: ", err);
+      console.error("Couldn't fetch reaction on old message: ", err);
       return;
     }
   }
 
-  // We ignore certain message types.
-  if (reaction.message.author === client.user)
+  // Ignore bot messages.
+  if (reaction.message.author.bot)
     return;
 
   const msg = reaction.message;
   const totalReacts = reactionCount(msg);
+  const fwdID = await db.getFwdChan(msg.guild.id);
+  const fwdChan = await client.channels.resolve(fwdID);
+
+  // If the message has been added to the board already, edit
+  // our message to reflect the new count.
+  const onBoard = await db.onBoard(msg.id);
+  if (onBoard) {
+    const oldMsg = await fwdChan.messages.fetch(onBoard);
+    await oldMsg.edit(messageTemplate(msg, totalReacts));
+    return;
+  }
+
+  // Otherwise, check if we need to add a new post.
   const reactMin = await db.getReactionMin(msg.guild.id);
-
   if (totalReacts >= reactMin) {
-    const fwdID = await db.getFwdChan(msg.guild.id);
-    const fwdChan = await client.channels.resolve(fwdID);
-
-    let embed = new Discord.MessageEmbed()
-      .setColor("#f850d2")
-      .setAuthor(msg.author.tag, msg.author.avatarURL({
-        dynamic: true,
-        size: 64,
-      }))
-      .setDescription(msg.content)
-      .addField(`**${totalReacts}** Reacts`, `[Original](${msg.url})`);
-    if (msg.attachments.array().length > 0)
-      embed.setImage(msg.attachments.array()[0].proxyURL);
-    embed
-      .setTimestamp()
-      .setFooter(`reactive v${process.env.npm_package_version}`, client.user.avatarURL());
-
-    await fwdChan?.send(embed);
+    const sentMsg = await fwdChan.send(messageTemplate(msg, totalReacts));
+    await db.addMapping(msg.id, sentMsg.id);
   }
 });
 
@@ -89,18 +105,35 @@ client.on("messageReactionRemove", async reaction => {
     }
   }
 
-  // We ignore certain message types.
-  if (reaction.message.author === client.user)
+  // Ignore bot messages.
+  if (reaction.message.author.bot)
+    return;
+
+  const msg = reaction.message;
+
+  // Only operate on messages posted to the board.
+  const onBoard = await db.onBoard(msg.id);
+  if (!onBoard)
     return;
 
   const minReacts = await db.getReactionMin(reaction.message.guild.id);
   const totalReacts = reactionCount(reaction.message);
-  console.info("Message reaction removed.", totalReacts);
+  const fwdID = await db.getFwdChan(msg.guild.id);
+  const fwdChan = await client.channels.resolve(fwdID);
 
+  // Drop from the board.
   if (totalReacts < minReacts) {
-    console.info("TODO: remove from starboard.");
+    await fwdChan.messages.fetch(onBoard).delete({
+      reason: "Less reactions than required to remain on the board.",
+    });
+    await db.removeMapping(msg.id);
+    return;
   }
+
+  // Otherwise update to reflect the new count.
+  const oldMsg = await fwdChan.messages.fetch(onBoard);
+  await oldMsg.edit(messageTemplate(msg, totalReacts));
 });
 
-client.on("ready", () => console.log(`Logged in as ${client.user.tag}!`));
+client.on("ready", () => console.info(`Logged in as ${client.user.tag}!`));
 client.login(process.env.TOKEN);

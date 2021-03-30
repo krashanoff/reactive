@@ -33,19 +33,59 @@ async function transaction(tx) {
 }
 
 /**
- * Check if a message has been posted to a board.
+ * Check if a message has been posted to a board. If is has,
+ * return the ID of the message on the board.
  * 
  * @param {String} id ID of the message to check.
- * @returns {Boolean} If the message with given ID has been posted to a server's board.
+ * @returns {String} If the message with given ID has been posted to a server's board.
  */
 const onBoard = id =>
   transaction(async db => (
-    !!(await db
+    (await db
       .collection("messages")
       .findOne(
-        { id }
+        { from: id }
       )
+    )?.to || ""
+  ));
+
+/**
+ * Add a mapping to the board.
+ * 
+ * @param {String} from Message ID to map from.
+ * @param {String} to Message ID to map to.
+ */
+const addMapping = (from, to) =>
+  transaction(async db => (
+    (await db
+      .collection("messages")
+      .insertOne({
+        from,
+        to,
+      })
     )
+  ));
+
+/**
+ * Remove a mapping from the board.
+ * 
+ * @param {String} id ID of either the message on the board OR the
+ * original message.
+ * @returns {Boolean} If the operation terminated successfully.
+ */
+const removeMapping = id =>
+  transaction(async db => (
+    (await db
+      .collection("messages")
+      .deleteOne(
+        {
+          $or: [
+            { from: id },
+            { to: id },
+          ]
+        }
+      )
+    ).deletedCount === 1
   ));
 
 /**
@@ -119,6 +159,8 @@ const setFwdChan = (id, newChanID) =>
 
 module.exports = {
   onBoard,
+  addMapping,
+  removeMapping,
   getReactionMin,
   setReactionMin,
   getFwdChan,
